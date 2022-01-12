@@ -25,6 +25,7 @@ import operator
 import os
 
 import geopandas as gpd
+import collections
 import importlib_metadata
 import julian
 import netCDF4 as nc
@@ -35,6 +36,7 @@ from shapely.geometry import Point
 from shapely.ops import transform
 
 from podaac.subsetter import xarray_enhancements as xre
+from podaac.subsetter import dimension_cleanup as dc
 
 GROUP_DELIM = '__'
 SERVICE_NAME = 'l2ss-py'
@@ -797,7 +799,7 @@ def subset_with_shapefile(dataset, lat_var_name, lon_var_name, shapefile, cut):
     in_shape_vec = np.vectorize(in_shape)
     boolean_mask = xr.apply_ufunc(in_shape_vec, dataset[lon_var_name], dataset[lat_var_name])
     return xre.where(dataset, boolean_mask, cut)
-
+    
 
 def transform_grouped_dataset(nc_dataset, file_to_subset):
     """
@@ -840,6 +842,8 @@ def transform_grouped_dataset(nc_dataset, file_to_subset):
                 for var_name, var in item.variables.items():
                     var_group_name = f'{group_path}{GROUP_DELIM}{var_name}'
                     nc_dataset.variables[var_group_name] = var
+                    dim_list = list(var.dimensions)
+                    
                 # Delete variables
                 var_names = list(item.variables.keys())
                 for var_name in var_names:
@@ -867,6 +871,7 @@ def transform_grouped_dataset(nc_dataset, file_to_subset):
         new_var_name = f'{GROUP_DELIM}{var_name}'
         nc_dataset.variables[new_var_name] = nc_dataset.variables[var_name]
         del nc_dataset.variables[var_name]
+        
 
     walk(nc_dataset.groups, '')
 
@@ -963,6 +968,7 @@ def _rename_variables(dataset, base_dataset):
 
         # Copy attributes
         var_attrs = variable.attrs
+
         var_group.variables[new_var_name].setncatts(var_attrs)
 
         # Copy data
@@ -1007,13 +1013,14 @@ def subset(file_to_subset, bbox, output_file, variables=None,  # pylint: disable
     """
 
     # Open dataset with netCDF4 first, so we can get group info
-    nc_dataset = nc.Dataset(file_to_subset, mode='r')
+    nc_dataset = nc.Dataset(file_to_subset, mode='r+')
 
     has_groups = bool(nc_dataset.groups)
 
     # If dataset has groups, transform to work with xarray
     if has_groups:
         nc_dataset = transform_grouped_dataset(nc_dataset, file_to_subset)
+        nc_dataset = dc.remove_duplicate_dims(nc_dataset)
 
     if variables:
         variables = [x.replace('/', GROUP_DELIM) for x in variables]
